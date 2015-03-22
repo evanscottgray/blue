@@ -3,7 +3,13 @@ var AppContainer = React.createClass({
         return (
             <div>
                 <BootstrapNav brand="in" />
-                <PeopleBox url="/api/in" pollInterval={3000}/>
+                <div className="container-fluid inApp">
+                    <div className="row">
+                        <div className="col-md-6 col-md-offset-3">
+                            <PeopleBox url="/api/in" pollInterval={50}/>
+                        </div>
+                    </div>
+                </div>
             </div>
         );
     }
@@ -16,7 +22,6 @@ var PeopleBox = React.createClass({
             dataType: 'json',
             success: function (data) {
                 this.setState({data: data['status']});
-                console.log(data);
             }.bind(this),
             error: function (xhr, status, err) {
                 console.error(this.props.url, status, err.toString());
@@ -35,13 +40,81 @@ var PeopleBox = React.createClass({
         setInterval(this.loadRemote, this.props.pollInterval);
     },
     render: function () {
-        var createPerson = function(person) {
-            return  (<li>{person.name} - in: {person.in.toString()}</li>);
-        };
         return (
-            <div>
-            <ul>{this.state.data.map(createPerson)}</ul>
+            <PersonList data={this.state.data}/>
+        );
+    }
+});
+
+var PersonList = React.createClass({
+    render: function () {
+        var personNodes = this.props.data.map(function (data) {
+            return (
+                <Person person={data}>
+                    {data}
+                </Person>
+            );
+        });
+        return (
+            <div className="personList">
+                {personNodes}
             </div>
+        );
+    }
+});
+
+var Person = React.createClass({
+    render: function () {
+        return (
+                <div className="person">
+                    <BootstrapPersonPanel title={this.props.children.name}>
+                        {this.props.children}
+                    </BootstrapPersonPanel>
+                </div>
+        );
+    }
+});
+
+var BootstrapPersonPanel = React.createClass({
+    render: function () {
+        Array.prototype.diff = function(a) {
+            return this.filter(function(i) {return a.indexOf(i) < 0;});
+        };
+
+        var filterKeys = ['id'];
+
+        var data = this.props.children;
+        var propsAvailable = Object.keys(data);
+        var propsSelected = propsAvailable.diff(filterKeys);
+
+        var items = propsSelected.map(function(key) {
+            var val = data[key];
+            if (typeof(val) == "boolean") {
+                val = val.toString();
+            }
+            if(val) {
+                return (
+                    <li>{key}:  {val}</li>        
+                );
+            }
+        });
+        var cx = React.addons.classSet;
+        var classes = cx(
+            {
+                'panel panel-warning': !this.props.children.in,
+                'panel panel-success': this.props.children.in
+            }
+        );
+
+        return (
+          <div className={classes}> 
+              <div className="panel-heading"> {this.props.title} </div>
+              <div className="panel-body">
+                  <ul>
+                      {items}
+                  </ul>
+              </div>
+          </div>
         );
     }
 });
