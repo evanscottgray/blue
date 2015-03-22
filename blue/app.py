@@ -2,10 +2,10 @@ import bluetooth
 from flask import Flask
 from flask import abort, request, jsonify
 from celery import Celery
-from lib.utils import RedisCache
 import uuid
 from datetime import timedelta
 import redis
+import json
 
 app = Flask(__name__)
 app.config['CELERY_BROKER_URL'] = 'redis://localhost:6379/0'
@@ -15,7 +15,11 @@ app.config['CELERYBEAT_SCHEDULE'] = {
     'update_in': {
         'task': 'update_in',
         'schedule': timedelta(seconds=30)
-    }
+        },
+    'update_nearby_devices': {
+        'task': 'update_nearby_devices',
+        'schedule': timedelta(seconds=15)
+        }
 }
 
 
@@ -34,38 +38,106 @@ def make_celery(app):
     return celery
 celery = make_celery(app)
 r = redis.StrictRedis(host='localhost', port=6379, db=1)
-DB = RedisCache(redis=r, default={'people': []})
 
 
 @celery.task(name='update_in')
 def update_in():
-    people = [person for person in DB['people']]
-    for i, person in enumerate(people):
-        for d, device in enumerate(person.get('devices')):
-            if bluetooth.lookup_name(device['mac'], timeout=10):
-                people[i]['devices'][d]['in'] = True
-            else:
-                people[i]['devices'][d]['in'] = False
-    DB.load_from_redis()
-    updated_people = [person for person in people if person in DB['people']]
-    DB['people'] = updated_people
-    DB.save()
-    return DB['people']
+    persons = {person['id']: person for person in get_redis_persons()}
+    for _, person in persons.iteritems():
+        for device in person['devices']:
+            device = search_for_device(device)
+
+    _persons = get_redis_persons()
+    p = r.pipeline()
+    for _person in _persons:
+        try:
+            update_person = persons[_person['id']]
+            update_devices = {d['id']: d for d in update_person['devices']}
+            for i, _device in enumerate(_person['devices']):
+                try:
+                    _person['devices'][i] = update_devices[_device['id']]
+                except KeyError or IndexError:
+                    pass
+        except KeyError:
+            pass
+        for key in _person.keys():
+            redis_key = 'person.%s' % _person['id']
+            p.hset(redis_key, key, json.dumps(_person[key]))
+    p.execute()
+    return _persons
 
 
-def get_nearby_devices():
+@celery.task(name='update_nearby_devices')
+def update_nearby_devices():
     devices = []
-    for d in bluetooth.discover_devices(duration=3, lookup_names=True):
+    for d in bluetooth.discover_devices(duration=10, lookup_names=True):
         try:
             device = {'mac': d[0], 'name': d[1]}
         except IndexError:
             device = {'mac': d[-1], 'name': None}
         devices.append(device)
+    r.hset('devices', 'nearby', json.dumps(devices))
     return devices
 
 
+def get_nearby_devices():
+    redis_data = r.hget('devices', 'nearby')
+    return json.loads(redis_data)
+
+
+def search_for_device(device):
+    if bluetooth.lookup_name(device.get('mac'), timeout=10):
+        device['in'] = True
+    else:
+        device['in'] = False
+    return device
+
+
+def get_redis_persons():
+    person_keys = r.keys('person.*')
+    p = r.pipeline()
+    for key in person_keys:
+        p.hgetall(key)
+    redis_data = p.execute()
+    persons = []
+    for person in redis_data:
+        for k, v in person.iteritems():
+            try:
+                person[k] = json.loads(v)
+            except:
+                pass
+        persons.append(person)
+    return persons
+
+
+def get_redis_person(person_uuid):
+    redis_key = 'person.%s' % person_uuid
+    redis_data = r.hgetall(redis_key)
+    for k, v in redis_data.iteritems():
+        try:
+            redis_data[k] = json.loads(v)
+        except:
+            pass
+    return redis_data
+
+
+def set_redis_person(person):
+    key_uuid = person['id']
+    redis_key = 'person.%s' % key_uuid
+    p = r.pipeline()
+    for key in person.keys():
+        p.hset(redis_key, key, json.dumps(person[key]))
+    p.execute()
+    return person
+
+
+def delete_redis_person(person_uuid):
+    redis_key = 'person.%s' % person_uuid
+    r.delete(redis_key)
+
+
 def in_status():
-    people = [person for person in DB.get('people')]
+    people = get_redis_persons()
     for i, person in enumerate(people):
         if True in map(lambda x: True in x.values(), person['devices']):
             people[i] = {'name': person['name'],
@@ -90,9 +162,9 @@ def list_nearby_devices():
 
 @app.route('/api/persons', methods=['GET', 'POST'])
 def persons():
-    DB.load_from_redis()
     if request.method == 'GET':
-        return jsonify({'persons': DB['people']}), 200
+        d = get_redis_persons()
+        return jsonify({'persons': d}), 200
     if request.method == 'POST':
         if not request.get_json() or 'name' not in request.get_json():
             abort(401)
@@ -105,34 +177,25 @@ def persons():
                       'desc': d['desc']
                       }
             person['devices'].append(device)
-            DB['people'].append(person)
-            print DB
-            DB.save()
-            DB.load_from_redis()
-            print DB
+        set_redis_person(person)
         return jsonify({'person': person}), 201
 
 
 @app.route('/api/persons/<person_uuid>', methods=['GET', 'DELETE'])
 def person(person_uuid):
-    DB.load_from_redis()
-    person = [x for x in DB['people'] if (unicode(person_uuid) == x['id'])]
+    person = get_redis_person(person_uuid)
     if len(person) == 0:
         abort(404)
-    person = person[-1]
     if request.method == 'DELETE':
-        DB['people'].remove(person)
-        DB.save()
+        delete_redis_person(person_uuid)
     return jsonify({'person': person}), 200
 
 
 @app.route('/api/persons/<person_uuid>/devices', methods=['GET', 'POST'])
 def person_devices(person_uuid):
-    DB.load_from_redis()
-    person = [x for x in DB['people'] if (unicode(person_uuid) == x['id'])]
+    person = get_redis_person(person_uuid)
     if len(person) == 0:
         abort(404)
-    person = person[-1]
     if request.method == 'GET':
         return jsonify({'devices': person['devices']}), 200
     if request.method == 'POST':
@@ -141,38 +204,31 @@ def person_devices(person_uuid):
         device = {'id': str(uuid.uuid4()),
                   'mac': request.json['mac'],
                   'desc': request.json['desc'],
-                  'in': True
                   }
-        index = DB['people'].index(person)
         person['devices'].append(device)
-        DB['people'][index] = person
-        DB.save()
+        set_redis_person(person)
         return jsonify({'device': device}), 201
 
 
 @app.route('/api/persons/<person_uuid>/devices/<device_uuid>',
            methods=['GET', 'DELETE'])
 def person_device(person_uuid, device_uuid):
-    DB.load_from_redis()
-    person = [x for x in DB['people'] if (unicode(person_uuid) == x['id'])]
+    person = get_redis_person(person_uuid)
     if len(person) == 0:
         abort(404)
-    person = person[-1]
     device = [x for x in person['devices']
               if (unicode(device_uuid) == x['id'])]
     if len(device) == 0:
         abort(404)
     device = device[-1]
     if request.method == 'DELETE':
-        idx = DB['people'].index(person)
-        DB['people'][idx]['devices'].remove(device)
-        DB.save()
+        person['devices'].remove(device)
+        set_redis_person(person)
     return jsonify({'device': device}), 200
 
 
 @app.route("/api/in")
 def people_in():
-    DB.load_from_redis()
     status = in_status()
     return jsonify({'status': status}), 200
 
