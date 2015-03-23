@@ -6,8 +6,10 @@ import uuid
 from datetime import timedelta
 import redis
 import json
+from flask.ext.cors import CORS
 
 app = Flask(__name__)
+cors = CORS(app)
 app.config['CELERY_BROKER_URL'] = 'redis://localhost:6379/0'
 app.config['CELERY_RESULT_BACKEND'] = 'redis://localhost:6379/0'
 app.config['CELERY_TIMEZONE'] = 'UTC'
