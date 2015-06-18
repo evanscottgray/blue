@@ -1,0 +1,27 @@
+{
+  "name": "blue",
+  "version": "0.0.1",
+  "homepage": "https://github.com/evanscottgray/blue",
+  "authors": [
+    "Evan Gray <evanscottgray@gmail.com>"
+  ],
+  "description": "an easy way to see who is in",
+  "keywords": [
+    "bluetooth",
+    "react"
+  ],
+  "license": "MIT",
+  "ignore": [
+    "**/.*",
+    "node_modules",
+    "bower_components",
+    "test",
+    "tests"
+  ],
+  "dependencies": {
+    "react-bootstrap": "~0.18.0",
+    "bootstrap": "~3.3.4",
+    "jquery": "~2.1.3",
+    "react": "~0.13.1"
+  }
+}

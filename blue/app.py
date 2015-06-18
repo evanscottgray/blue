@@ -16,7 +16,7 @@ app.config['CELERY_TIMEZONE'] = 'UTC'
 app.config['CELERYBEAT_SCHEDULE'] = {
     'update_in': {
         'task': 'update_in',
-        'schedule': timedelta(seconds=30)
+        'schedule': timedelta(seconds=45)
         },
     'update_nearby_devices': {
         'task': 'update_nearby_devices',
@@ -72,7 +72,7 @@ def update_in():
 @celery.task(name='update_nearby_devices')
 def update_nearby_devices():
     devices = []
-    for d in bluetooth.discover_devices(duration=10, lookup_names=True):
+    for d in bluetooth.discover_devices(duration=5, lookup_names=True):
         try:
             device = {'mac': d[0], 'name': d[1]}
         except IndexError:
